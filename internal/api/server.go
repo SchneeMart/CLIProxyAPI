@@ -19,6 +19,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/access"
+	audioHandlers "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/audio"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v6/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/api/modules"
@@ -314,6 +315,7 @@ func (s *Server) setupRoutes() {
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
+	audioHandler := audioHandlers.NewAudioHandler(s.cfg)
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
@@ -325,6 +327,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
+		v1.POST("/audio/transcriptions", audioHandler.Transcriptions)
 	}
 
 	// Gemini compatible API routes
@@ -343,6 +346,7 @@ func (s *Server) setupRoutes() {
 			"endpoints": []string{
 				"POST /v1/chat/completions",
 				"POST /v1/completions",
+				"POST /v1/audio/transcriptions",
 				"GET /v1/models",
 			},
 		})
