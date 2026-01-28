@@ -1,0 +1,16 @@
+# Minimales Runtime-Image für lokale Entwicklung
+# Das Binary wird lokal gebaut und gemountet
+
+FROM alpine:3.22.0
+
+# Zeitzone und CA-Zertifikate
+RUN apk add --no-cache tzdata ca-certificates && \
+    cp /usr/share/zoneinfo/Europe/Vienna /etc/localtime && \
+    echo "Europe/Vienna" > /etc/timezone
+
+# Arbeitsverzeichnis
+WORKDIR /CLIProxyAPI
+
+# Das Binary wird via Volume gemountet
+# CMD führt das gemountete Binary aus
+CMD ["./CLIProxyAPI"]
