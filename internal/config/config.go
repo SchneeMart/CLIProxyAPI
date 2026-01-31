@@ -109,7 +109,47 @@ type Config struct {
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
+	// Wyoming konfiguriert die Wyoming-Protokoll-Server für Home Assistant Voice.
+	Wyoming WyomingConfig `yaml:"wyoming" json:"wyoming"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
+}
+
+// WyomingConfig enthält die Konfiguration für die Wyoming-Protokoll-Server.
+type WyomingConfig struct {
+	// Enabled aktiviert/deaktiviert die Wyoming-Server
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// STT-Konfiguration
+	STT WyomingSTTConfig `yaml:"stt" json:"stt"`
+
+	// TTS-Konfiguration
+	TTS WyomingTTSConfig `yaml:"tts" json:"tts"`
+
+	// WakeWord-Konfiguration
+	WakeWord WyomingWakeWordConfig `yaml:"wake-word" json:"wake-word"`
+}
+
+// WyomingSTTConfig enthält die STT-spezifische Konfiguration.
+type WyomingSTTConfig struct {
+	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port     int    `yaml:"port" json:"port"`
+	Model    string `yaml:"model" json:"model"`
+	Language string `yaml:"language" json:"language"`
+}
+
+// WyomingTTSConfig enthält die TTS-spezifische Konfiguration.
+type WyomingTTSConfig struct {
+	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port    int    `yaml:"port" json:"port"`
+	Model   string `yaml:"model" json:"model"`
+}
+
+// WyomingWakeWordConfig enthält die Wake-Word-spezifische Konfiguration.
+type WyomingWakeWordConfig struct {
+	Enabled         *bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port            int     `yaml:"port" json:"port"`
+	EnergyThreshold float64 `yaml:"energy-threshold" json:"energy-threshold"`
 }
 
 // TLSConfig holds HTTPS server settings.

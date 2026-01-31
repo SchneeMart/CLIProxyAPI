@@ -329,6 +329,8 @@ func (s *Server) setupRoutes() {
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
 		v1.POST("/audio/transcriptions", audioHandler.Transcriptions)
+		v1.POST("/audio/speech", audioHandler.Speech)
+		v1.GET("/oauth-usage", s.oauthUsageHandler())
 	}
 
 	// Gemini compatible API routes
@@ -348,6 +350,7 @@ func (s *Server) setupRoutes() {
 				"POST /v1/chat/completions",
 				"POST /v1/completions",
 				"POST /v1/audio/transcriptions",
+				"POST /v1/audio/speech",
 				"GET /v1/models",
 			},
 		})

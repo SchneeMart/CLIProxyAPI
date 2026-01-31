@@ -18,6 +18,7 @@ import (
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/wsrelay"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/wyoming"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -86,6 +87,9 @@ type Service struct {
 
 	// wsGateway manages websocket Gemini providers.
 	wsGateway *wsrelay.Manager
+
+	// wyomingManager verwaltet die Wyoming-Protokoll-Server für Home Assistant Voice.
+	wyomingManager *wyoming.Manager
 }
 
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
@@ -501,6 +505,19 @@ func (s *Service) Run(ctx context.Context) error {
 	time.Sleep(100 * time.Millisecond)
 	fmt.Printf("API server started successfully on: %s:%d\n", s.cfg.Host, s.cfg.Port)
 
+	// Wyoming-Server starten (Home Assistant Voice)
+	if s.cfg.Wyoming.Enabled {
+		s.wyomingManager = wyoming.NewManager()
+		proxyBaseURL := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.Port)
+		apiKey := ""
+		if len(s.cfg.APIKeys) > 0 {
+			apiKey = s.cfg.APIKeys[0]
+		}
+		if err := s.wyomingManager.Start(ctx, &s.cfg.Wyoming, proxyBaseURL, apiKey); err != nil {
+			log.Errorf("Fehler beim Starten der Wyoming-Server: %v", err)
+		}
+	}
+
 	if s.hooks.OnAfterStart != nil {
 		s.hooks.OnAfterStart(s)
 	}
@@ -638,6 +655,11 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		if s.authQueueStop != nil {
 			s.authQueueStop()
 			s.authQueueStop = nil
+		}
+
+		// Wyoming-Server stoppen
+		if s.wyomingManager != nil {
+			s.wyomingManager.Stop()
 		}
 
 		// no legacy clients to persist
