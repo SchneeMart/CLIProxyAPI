@@ -8,35 +8,35 @@ import (
 )
 
 func TestEnsureCacheControl(t *testing.T) {
-	// Test Fall 1: System Prompt als String
+	// Test case 1: System prompt as string
 	t.Run("String System Prompt", func(t *testing.T) {
-		input := []byte(`{"model": "claude-3-5-sonnet", "system": "Dies ist ein langer System Prompt", "messages": []}`)
+		input := []byte(`{"model": "claude-3-5-sonnet", "system": "This is a long system prompt", "messages": []}`)
 		output := ensureCacheControl(input)
 
 		res := gjson.GetBytes(output, "system.0.cache_control.type")
 		if res.String() != "ephemeral" {
-			t.Errorf("cache_control nicht im System-String gefunden. Output: %s", string(output))
+			t.Errorf("cache_control not found in system string. Output: %s", string(output))
 		}
 	})
 
-	// Test Fall 2: System Prompt als Array
+	// Test case 2: System prompt as array
 	t.Run("Array System Prompt", func(t *testing.T) {
-		input := []byte(`{"model": "claude-3-5-sonnet", "system": [{"type": "text", "text": "Teil 1"}, {"type": "text", "text": "Teil 2"}], "messages": []}`)
+		input := []byte(`{"model": "claude-3-5-sonnet", "system": [{"type": "text", "text": "Part 1"}, {"type": "text", "text": "Part 2"}], "messages": []}`)
 		output := ensureCacheControl(input)
 
-		// cache_control sollte nur am LETZTEN Element sein
+		// cache_control should only be on the LAST element
 		res0 := gjson.GetBytes(output, "system.0.cache_control")
 		res1 := gjson.GetBytes(output, "system.1.cache_control.type")
 
 		if res0.Exists() {
-			t.Errorf("cache_control sollte NICHT am ersten Element sein")
+			t.Errorf("cache_control should NOT be on the first element")
 		}
 		if res1.String() != "ephemeral" {
-			t.Errorf("cache_control nicht am letzten System-Element gefunden. Output: %s", string(output))
+			t.Errorf("cache_control not found on last system element. Output: %s", string(output))
 		}
 	})
 
-	// Test Fall 3: Tools werden gecached
+	// Test case 3: Tools are cached
 	t.Run("Tools Caching", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -49,26 +49,26 @@ func TestEnsureCacheControl(t *testing.T) {
 		}`)
 		output := ensureCacheControl(input)
 
-		// cache_control sollte nur am LETZTEN Tool sein
+		// cache_control should only be on the LAST tool
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control")
 		tool1Cache := gjson.GetBytes(output, "tools.1.cache_control.type")
 
 		if tool0Cache.Exists() {
-			t.Errorf("cache_control sollte NICHT am ersten Tool sein")
+			t.Errorf("cache_control should NOT be on the first tool")
 		}
 		if tool1Cache.String() != "ephemeral" {
-			t.Errorf("cache_control nicht am letzten Tool gefunden. Output: %s", string(output))
+			t.Errorf("cache_control not found on last tool. Output: %s", string(output))
 		}
 
-		// System sollte auch cache_control haben
+		// System should also have cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
-			t.Errorf("cache_control nicht im System gefunden. Output: %s", string(output))
+			t.Errorf("cache_control not found in system. Output: %s", string(output))
 		}
 	})
 
-	// Test Fall 4: Tools und System sind UNABHÄNGIGE Breakpoints
-	// Per Anthropic Docs: Bis zu 4 Breakpoints erlaubt, Tools und System werden separat gecached
+	// Test case 4: Tools and system are INDEPENDENT breakpoints
+	// Per Anthropic docs: Up to 4 breakpoints allowed, tools and system are cached separately
 	t.Run("Independent Cache Breakpoints", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -80,21 +80,21 @@ func TestEnsureCacheControl(t *testing.T) {
 		}`)
 		output := ensureCacheControl(input)
 
-		// Tool hat bereits cache_control - sollte nicht geändert werden
+		// Tool already has cache_control - should not be changed
 		tool0Cache := gjson.GetBytes(output, "tools.0.cache_control.type")
 		if tool0Cache.String() != "ephemeral" {
-			t.Errorf("Existierendes cache_control wurde fälschlicherweise entfernt")
+			t.Errorf("existing cache_control was incorrectly removed")
 		}
 
-		// System SOLLTE cache_control bekommen, weil es ein UNABHÄNGIGER Breakpoint ist
-		// Tools und System sind separate Cache-Ebenen in der Hierarchie
+		// System SHOULD get cache_control because it is an INDEPENDENT breakpoint
+		// Tools and system are separate cache levels in the hierarchy
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
-			t.Errorf("System sollte eigenen cache_control Breakpoint haben (unabhängig von Tools)")
+			t.Errorf("system should have its own cache_control breakpoint (independent of tools)")
 		}
 	})
 
-	// Test Fall 5: Nur Tools, kein System
+	// Test case 5: Only tools, no system
 	t.Run("Only Tools No System", func(t *testing.T) {
 		input := []byte(`{
 			"model": "claude-3-5-sonnet",
@@ -107,13 +107,13 @@ func TestEnsureCacheControl(t *testing.T) {
 
 		toolCache := gjson.GetBytes(output, "tools.0.cache_control.type")
 		if toolCache.String() != "ephemeral" {
-			t.Errorf("cache_control nicht am Tool gefunden. Output: %s", string(output))
+			t.Errorf("cache_control not found on tool. Output: %s", string(output))
 		}
 	})
 
-	// Test Fall 6: Viele Tools (Claude Code Szenario)
+	// Test case 6: Many tools (Claude Code scenario)
 	t.Run("Many Tools (Claude Code Scenario)", func(t *testing.T) {
-		// Simuliere Claude Code mit vielen Tools
+		// Simulate Claude Code with many tools
 		toolsJSON := `[`
 		for i := 0; i < 50; i++ {
 			if i > 0 {
@@ -132,42 +132,90 @@ func TestEnsureCacheControl(t *testing.T) {
 
 		output := ensureCacheControl(input)
 
-		// Nur das letzte Tool (index 49) sollte cache_control haben
+		// Only the last tool (index 49) should have cache_control
 		for i := 0; i < 49; i++ {
 			path := fmt.Sprintf("tools.%d.cache_control", i)
 			if gjson.GetBytes(output, path).Exists() {
-				t.Errorf("Tool %d sollte KEIN cache_control haben", i)
+				t.Errorf("tool %d should NOT have cache_control", i)
 			}
 		}
 
 		lastToolCache := gjson.GetBytes(output, "tools.49.cache_control.type")
 		if lastToolCache.String() != "ephemeral" {
-			t.Errorf("Letztes Tool (49) hat kein cache_control")
+			t.Errorf("last tool (49) should have cache_control")
 		}
 
-		// System sollte auch cache_control haben
+		// System should also have cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
-			t.Errorf("System hat kein cache_control")
+			t.Errorf("system should have cache_control")
 		}
 
-		fmt.Println("Test 6 (50 Tools) erfolgreich - cache_control nur am letzten Tool!")
+		t.Log("test passed: 50 tools - cache_control only on last tool")
 	})
 
-	// Test Fall 7: Leeres Tools-Array
+	// Test case 7: Empty tools array
 	t.Run("Empty Tools Array", func(t *testing.T) {
 		input := []byte(`{"model": "claude-3-5-sonnet", "tools": [], "system": "Test", "messages": []}`)
 		output := ensureCacheControl(input)
 
-		// System sollte trotzdem cache_control bekommen
+		// System should still get cache_control
 		systemCache := gjson.GetBytes(output, "system.0.cache_control.type")
 		if systemCache.String() != "ephemeral" {
-			t.Errorf("System sollte cache_control haben auch bei leerem Tools-Array")
+			t.Errorf("system should have cache_control even with empty tools array")
+		}
+	})
+
+	// Test case 8: Messages caching for multi-turn (second-to-last user)
+	t.Run("Messages Caching Second-To-Last User", func(t *testing.T) {
+		input := []byte(`{
+			"model": "claude-3-5-sonnet",
+			"messages": [
+				{"role": "user", "content": "First user"},
+				{"role": "assistant", "content": "Assistant reply"},
+				{"role": "user", "content": "Second user"},
+				{"role": "assistant", "content": "Assistant reply 2"},
+				{"role": "user", "content": "Third user"}
+			]
+		}`)
+		output := ensureCacheControl(input)
+
+		cacheType := gjson.GetBytes(output, "messages.2.content.0.cache_control.type")
+		if cacheType.String() != "ephemeral" {
+			t.Errorf("cache_control not found on second-to-last user turn. Output: %s", string(output))
+		}
+
+		lastUserCache := gjson.GetBytes(output, "messages.4.content.0.cache_control")
+		if lastUserCache.Exists() {
+			t.Errorf("last user turn should NOT have cache_control")
+		}
+	})
+
+	// Test case 9: Existing message cache_control should skip injection
+	t.Run("Messages Skip When Cache Control Exists", func(t *testing.T) {
+		input := []byte(`{
+			"model": "claude-3-5-sonnet",
+			"messages": [
+				{"role": "user", "content": [{"type": "text", "text": "First user"}]},
+				{"role": "assistant", "content": [{"type": "text", "text": "Assistant reply", "cache_control": {"type": "ephemeral"}}]},
+				{"role": "user", "content": [{"type": "text", "text": "Second user"}]}
+			]
+		}`)
+		output := ensureCacheControl(input)
+
+		userCache := gjson.GetBytes(output, "messages.0.content.0.cache_control")
+		if userCache.Exists() {
+			t.Errorf("cache_control should NOT be injected when a message already has cache_control")
+		}
+
+		existingCache := gjson.GetBytes(output, "messages.1.content.0.cache_control.type")
+		if existingCache.String() != "ephemeral" {
+			t.Errorf("existing cache_control should be preserved. Output: %s", string(output))
 		}
 	})
 }
 
-// TestCacheControlOrder prüft die korrekte Reihenfolge: tools -> system -> messages
+// TestCacheControlOrder verifies the correct order: tools -> system -> messages
 func TestCacheControlOrder(t *testing.T) {
 	input := []byte(`{
 		"model": "claude-sonnet-4",
@@ -186,26 +234,25 @@ func TestCacheControlOrder(t *testing.T) {
 
 	output := ensureCacheControl(input)
 
-	// Verifiziere die Cache-Breakpoints
-	// 1. Letztes Tool hat cache_control
+	// 1. Last tool has cache_control
 	if gjson.GetBytes(output, "tools.1.cache_control.type").String() != "ephemeral" {
-		t.Error("Letztes Tool sollte cache_control haben")
+		t.Error("last tool should have cache_control")
 	}
 
-	// 2. Erstes Tool hat KEIN cache_control
+	// 2. First tool has NO cache_control
 	if gjson.GetBytes(output, "tools.0.cache_control").Exists() {
-		t.Error("Erstes Tool sollte KEIN cache_control haben")
+		t.Error("first tool should NOT have cache_control")
 	}
 
-	// 3. Letztes System-Element hat cache_control
+	// 3. Last system element has cache_control
 	if gjson.GetBytes(output, "system.1.cache_control.type").String() != "ephemeral" {
-		t.Error("Letztes System-Element sollte cache_control haben")
+		t.Error("last system element should have cache_control")
 	}
 
-	// 4. Erstes System-Element hat KEIN cache_control
+	// 4. First system element has NO cache_control
 	if gjson.GetBytes(output, "system.0.cache_control").Exists() {
-		t.Error("Erstes System-Element sollte KEIN cache_control haben")
+		t.Error("first system element should NOT have cache_control")
 	}
 
-	fmt.Println("Cache-Reihenfolge korrekt: tools -> system")
+	t.Log("cache order correct: tools -> system")
 }

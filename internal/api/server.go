@@ -61,9 +61,9 @@ type ServerOption func(*serverOptionConfig)
 func defaultRequestLoggerFactory(cfg *config.Config, configPath string) logging.RequestLogger {
 	configDir := filepath.Dir(configPath)
 	if base := util.WritablePath(); base != "" {
-		return logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir)
+		return logging.NewFileRequestLogger(cfg.RequestLog, filepath.Join(base, "logs"), configDir, cfg.ErrorLogsMaxFiles)
 	}
-	return logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir)
+	return logging.NewFileRequestLogger(cfg.RequestLog, "logs", configDir, cfg.ErrorLogsMaxFiles)
 }
 
 // WithMiddleware appends additional Gin middleware during server construction.
@@ -328,6 +328,7 @@ func (s *Server) setupRoutes() {
 		v1.POST("/messages", claudeCodeHandlers.ClaudeMessages)
 		v1.POST("/messages/count_tokens", claudeCodeHandlers.ClaudeCountTokens)
 		v1.POST("/responses", openaiResponsesHandlers.Responses)
+		v1.POST("/responses/compact", openaiResponsesHandlers.Compact)
 		v1.POST("/audio/transcriptions", audioHandler.Transcriptions)
 		v1.POST("/audio/speech", audioHandler.Speech)
 		v1.GET("/oauth-usage", s.oauthUsageHandler())
@@ -502,6 +503,10 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.GET("/logs-max-total-size-mb", s.mgmt.GetLogsMaxTotalSizeMB)
 		mgmt.PUT("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
 		mgmt.PATCH("/logs-max-total-size-mb", s.mgmt.PutLogsMaxTotalSizeMB)
+
+		mgmt.GET("/error-logs-max-files", s.mgmt.GetErrorLogsMaxFiles)
+		mgmt.PUT("/error-logs-max-files", s.mgmt.PutErrorLogsMaxFiles)
+		mgmt.PATCH("/error-logs-max-files", s.mgmt.PutErrorLogsMaxFiles)
 
 		mgmt.GET("/usage-statistics-enabled", s.mgmt.GetUsageStatisticsEnabled)
 		mgmt.PUT("/usage-statistics-enabled", s.mgmt.PutUsageStatisticsEnabled)
@@ -910,6 +915,15 @@ func (s *Server) UpdateClients(cfg *config.Config) {
 			log.Debugf("usage_statistics_enabled updated from %t to %t", oldCfg.UsageStatisticsEnabled, cfg.UsageStatisticsEnabled)
 		} else {
 			log.Debugf("usage_statistics_enabled toggled to %t", cfg.UsageStatisticsEnabled)
+		}
+	}
+
+	if s.requestLogger != nil && (oldCfg == nil || oldCfg.ErrorLogsMaxFiles != cfg.ErrorLogsMaxFiles) {
+		if setter, ok := s.requestLogger.(interface{ SetErrorLogsMaxFiles(int) }); ok {
+			setter.SetErrorLogsMaxFiles(cfg.ErrorLogsMaxFiles)
+		}
+		if oldCfg != nil {
+			log.Debugf("error_logs_max_files updated from %d to %d", oldCfg.ErrorLogsMaxFiles, cfg.ErrorLogsMaxFiles)
 		}
 	}
 

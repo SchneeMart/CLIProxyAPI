@@ -84,6 +84,9 @@ func (e *ClaudeExecutor) HttpRequest(ctx context.Context, auth *cliproxyauth.Aut
 }
 
 func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (resp cliproxyexecutor.Response, err error) {
+	if opts.Alt == "responses/compact" {
+		return resp, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
+	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	apiKey, baseURL := claudeCreds(auth)
@@ -121,7 +124,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 	body = disableThinkingIfToolChoiceForced(body)
 
 	// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
-	body = ensureCacheControl(body)
+	if countCacheControls(body) == 0 {
+		body = ensureCacheControl(body)
+	}
 
 	// Extract betas from body and convert to header
 	var extraBetas []string
@@ -221,6 +226,9 @@ func (e *ClaudeExecutor) Execute(ctx context.Context, auth *cliproxyauth.Auth, r
 }
 
 func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Auth, req cliproxyexecutor.Request, opts cliproxyexecutor.Options) (stream <-chan cliproxyexecutor.StreamChunk, err error) {
+	if opts.Alt == "responses/compact" {
+		return nil, statusErr{code: http.StatusNotImplemented, msg: "/responses/compact not supported"}
+	}
 	baseModel := thinking.ParseSuffix(req.Model).ModelName
 
 	apiKey, baseURL := claudeCreds(auth)
@@ -256,7 +264,9 @@ func (e *ClaudeExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.A
 	body = disableThinkingIfToolChoiceForced(body)
 
 	// Auto-inject cache_control if missing (optimization for ClawdBot/clients without caching support)
-	body = ensureCacheControl(body)
+	if countCacheControls(body) == 0 {
+		body = ensureCacheControl(body)
+	}
 
 	// Extract betas from body and convert to header
 	var extraBetas []string
@@ -642,12 +652,16 @@ func applyClaudeHeaders(r *http.Request, auth *cliproxyauth.Auth, apiKey string,
 		ginHeaders = ginCtx.Request.Header
 	}
 
-	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14,prompt-caching-2024-07-31"
+	promptCachingBeta := "prompt-caching-2024-07-31"
+	baseBetas := "claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14,fine-grained-tool-streaming-2025-05-14," + promptCachingBeta
 	if val := strings.TrimSpace(ginHeaders.Get("Anthropic-Beta")); val != "" {
 		baseBetas = val
 		if !strings.Contains(val, "oauth") {
 			baseBetas += ",oauth-2025-04-20"
 		}
+	}
+	if !strings.Contains(baseBetas, promptCachingBeta) {
+		baseBetas += "," + promptCachingBeta
 	}
 
 	// Merge extra betas from request body
@@ -1023,6 +1037,51 @@ func ensureCacheControl(payload []byte) []byte {
 	return payload
 }
 
+func countCacheControls(payload []byte) int {
+	count := 0
+
+	// Check system
+	system := gjson.GetBytes(payload, "system")
+	if system.IsArray() {
+		system.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("cache_control").Exists() {
+				count++
+			}
+			return true
+		})
+	}
+
+	// Check tools
+	tools := gjson.GetBytes(payload, "tools")
+	if tools.IsArray() {
+		tools.ForEach(func(_, item gjson.Result) bool {
+			if item.Get("cache_control").Exists() {
+				count++
+			}
+			return true
+		})
+	}
+
+	// Check messages
+	messages := gjson.GetBytes(payload, "messages")
+	if messages.IsArray() {
+		messages.ForEach(func(_, msg gjson.Result) bool {
+			content := msg.Get("content")
+			if content.IsArray() {
+				content.ForEach(func(_, item gjson.Result) bool {
+					if item.Get("cache_control").Exists() {
+						count++
+					}
+					return true
+				})
+			}
+			return true
+		})
+	}
+
+	return count
+}
+
 // injectMessagesCacheControl adds cache_control to the second-to-last user turn for multi-turn caching.
 // Per Anthropic docs: "Place cache_control on the second-to-last User message to let the model reuse the earlier cache."
 // This enables caching of conversation history, which is especially beneficial for long multi-turn conversations.
@@ -1080,11 +1139,12 @@ func injectMessagesCacheControl(payload []byte) []byte {
 		contentCount := int(content.Get("#").Int())
 		if contentCount > 0 {
 			cacheControlPath := fmt.Sprintf("messages.%d.content.%d.cache_control", secondToLastUserIdx, contentCount-1)
-			var err error
-			payload, err = sjson.SetBytes(payload, cacheControlPath, map[string]string{"type": "ephemeral"})
+			result, err := sjson.SetBytes(payload, cacheControlPath, map[string]string{"type": "ephemeral"})
 			if err != nil {
 				log.Warnf("failed to inject cache_control into messages: %v", err)
+				return payload
 			}
+			payload = result
 		}
 	} else if content.Type == gjson.String {
 		// Convert string content to array with cache_control
@@ -1098,11 +1158,12 @@ func injectMessagesCacheControl(payload []byte) []byte {
 				},
 			},
 		}
-		var err error
-		payload, err = sjson.SetBytes(payload, contentPath, newContent)
+		result, err := sjson.SetBytes(payload, contentPath, newContent)
 		if err != nil {
 			log.Warnf("failed to inject cache_control into message string content: %v", err)
+			return payload
 		}
+		payload = result
 	}
 
 	return payload
@@ -1137,13 +1198,13 @@ func injectToolsCacheControl(payload []byte) []byte {
 
 	// Add cache_control to the last tool
 	lastToolPath := fmt.Sprintf("tools.%d.cache_control", toolCount-1)
-	var err error
-	payload, err = sjson.SetBytes(payload, lastToolPath, map[string]string{"type": "ephemeral"})
+	result, err := sjson.SetBytes(payload, lastToolPath, map[string]string{"type": "ephemeral"})
 	if err != nil {
 		log.Warnf("failed to inject cache_control into tools array: %v", err)
+		return payload
 	}
 
-	return payload
+	return result
 }
 
 // injectSystemCacheControl adds cache_control to the last element in the system prompt.
@@ -1176,11 +1237,12 @@ func injectSystemCacheControl(payload []byte) []byte {
 
 		// Add cache_control to the last system element
 		lastSystemPath := fmt.Sprintf("system.%d.cache_control", count-1)
-		var err error
-		payload, err = sjson.SetBytes(payload, lastSystemPath, map[string]string{"type": "ephemeral"})
+		result, err := sjson.SetBytes(payload, lastSystemPath, map[string]string{"type": "ephemeral"})
 		if err != nil {
 			log.Warnf("failed to inject cache_control into system array: %v", err)
+			return payload
 		}
+		payload = result
 	} else if system.Type == gjson.String {
 		// Convert string system prompt to array with cache_control
 		// "system": "text" -> "system": [{"type": "text", "text": "text", "cache_control": {"type": "ephemeral"}}]
@@ -1194,11 +1256,12 @@ func injectSystemCacheControl(payload []byte) []byte {
 				},
 			},
 		}
-		var err error
-		payload, err = sjson.SetBytes(payload, "system", newSystem)
+		result, err := sjson.SetBytes(payload, "system", newSystem)
 		if err != nil {
 			log.Warnf("failed to inject cache_control into system string: %v", err)
+			return payload
 		}
+		payload = result
 	}
 
 	return payload
