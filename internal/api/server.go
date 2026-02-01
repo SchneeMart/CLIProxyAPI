@@ -332,6 +332,9 @@ func (s *Server) setupRoutes() {
 		v1.POST("/audio/transcriptions", audioHandler.Transcriptions)
 		v1.POST("/audio/speech", audioHandler.Speech)
 		v1.GET("/oauth-usage", s.oauthUsageHandler())
+		v1.GET("/model-status", s.modelStatusHandler())
+		v1.GET("/switch-model", s.switchModelGetHandler())
+		v1.POST("/switch-model", s.switchModelPostHandler())
 	}
 
 	// Gemini compatible API routes

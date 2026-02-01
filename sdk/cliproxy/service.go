@@ -1266,8 +1266,9 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 	}
 
 	type aliasEntry struct {
-		alias string
-		fork  bool
+		alias        string
+		upstreamName string // Upstream-Modellname mit Original-Casing
+		fork         bool
 	}
 
 	forward := make(map[string][]aliasEntry, len(aliases))
@@ -1281,7 +1282,7 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			continue
 		}
 		key := strings.ToLower(name)
-		forward[key] = append(forward[key], aliasEntry{alias: alias, fork: aliases[i].Fork})
+		forward[key] = append(forward[key], aliasEntry{alias: alias, upstreamName: name, fork: aliases[i].Fork})
 	}
 	if len(forward) == 0 {
 		return models
@@ -1289,6 +1290,7 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 
 	out := make([]*ModelInfo, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
+	matched := make(map[string]struct{}) // Tracking welche forward-Keys ein Match im Listing hatten
 	for _, model := range models {
 		if model == nil {
 			continue
@@ -1307,6 +1309,8 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			out = append(out, model)
 			continue
 		}
+
+		matched[key] = struct{}{}
 
 		keepOriginal := false
 		for _, entry := range entries {
@@ -1353,5 +1357,51 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			out = append(out, model)
 		}
 	}
+
+	// Synthetische Einträge für Aliase, deren Upstream-Modell nicht im Provider-Listing war.
+	// Das ermöglicht Routing über frei wählbare Alias-Namen (z.B. "default", "smart"),
+	// auch wenn der Upstream-Modellname (z.B. "claude-opus-4-5") nicht direkt vom
+	// Provider gelistet wird.
+	now := time.Now().Unix()
+	for upstreamKey, entries := range forward {
+		if _, wasMatched := matched[upstreamKey]; wasMatched {
+			continue // Wurde bereits von einem Modell im Listing verarbeitet
+		}
+		for _, entry := range entries {
+			aliasKey := strings.ToLower(strings.TrimSpace(entry.alias))
+			if aliasKey == "" {
+				continue
+			}
+			// Alias-Eintrag registrieren
+			if _, exists := seen[aliasKey]; !exists {
+				seen[aliasKey] = struct{}{}
+				out = append(out, &ModelInfo{
+					ID:          entry.alias,
+					Name:        entry.alias,
+					DisplayName: entry.alias,
+					Object:      "model",
+					Created:     now,
+					OwnedBy:     provider,
+					Type:        provider,
+				})
+			}
+			// Upstream-Modellname ebenfalls registrieren für Cross-Provider-Routing.
+			// Damit kann ClientSupportsModel sowohl mit dem Alias als auch mit dem
+			// aufgelösten Modellnamen TRUE zurückgeben.
+			if _, exists := seen[upstreamKey]; !exists {
+				seen[upstreamKey] = struct{}{}
+				out = append(out, &ModelInfo{
+					ID:          entry.upstreamName,
+					Name:        entry.upstreamName,
+					DisplayName: entry.upstreamName,
+					Object:      "model",
+					Created:     now,
+					OwnedBy:     provider,
+					Type:        provider,
+				})
+			}
+		}
+	}
+
 	return out
 }

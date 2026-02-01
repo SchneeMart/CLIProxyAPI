@@ -15,6 +15,10 @@ type modelAliasEntry interface {
 type oauthModelAliasTable struct {
 	// reverse maps channel -> alias (lower) -> original upstream model name.
 	reverse map[string]map[string]string
+	// fallbacks maps channel -> alias (lower) -> ordered list of fallback alias names.
+	fallbacks map[string]map[string][]string
+	// upstreamToProviders maps upstream model name (lower) -> list of channels (providers).
+	upstreamToProviders map[string][]string
 }
 
 func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelAlias) *oauthModelAliasTable {
@@ -22,7 +26,9 @@ func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelA
 		return &oauthModelAliasTable{}
 	}
 	out := &oauthModelAliasTable{
-		reverse: make(map[string]map[string]string, len(aliases)),
+		reverse:             make(map[string]map[string]string, len(aliases)),
+		fallbacks:           make(map[string]map[string][]string),
+		upstreamToProviders: make(map[string][]string),
 	}
 	for rawChannel, entries := range aliases {
 		channel := strings.ToLower(strings.TrimSpace(rawChannel))
@@ -30,10 +36,23 @@ func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelA
 			continue
 		}
 		rev := make(map[string]string, len(entries))
+		fb := make(map[string][]string)
 		for _, entry := range entries {
 			name := strings.TrimSpace(entry.Name)
 			alias := strings.TrimSpace(entry.Alias)
-			if name == "" || alias == "" {
+			if name == "" {
+				continue
+			}
+
+			// Upstream-Name -> Provider (Channel) indexieren.
+			// Erlaubt das Auflösen von Providern für Upstream-Modellnamen,
+			// auch wenn sie nicht direkt in der Registry stehen.
+			upstreamKey := strings.ToLower(name)
+			if !sliceContains(out.upstreamToProviders[upstreamKey], channel) {
+				out.upstreamToProviders[upstreamKey] = append(out.upstreamToProviders[upstreamKey], channel)
+			}
+
+			if alias == "" {
 				continue
 			}
 			if strings.EqualFold(name, alias) {
@@ -44,13 +63,34 @@ func compileOAuthModelAliasTable(aliases map[string][]internalconfig.OAuthModelA
 				continue
 			}
 			rev[aliasKey] = name
+			if len(entry.Fallback) > 0 {
+				cleaned := make([]string, 0, len(entry.Fallback))
+				for _, f := range entry.Fallback {
+					f = strings.TrimSpace(f)
+					if f != "" {
+						cleaned = append(cleaned, f)
+					}
+				}
+				if len(cleaned) > 0 {
+					fb[aliasKey] = cleaned
+				}
+			}
 		}
 		if len(rev) > 0 {
 			out.reverse[channel] = rev
 		}
+		if len(fb) > 0 {
+			out.fallbacks[channel] = fb
+		}
 	}
 	if len(out.reverse) == 0 {
 		out.reverse = nil
+	}
+	if len(out.fallbacks) == 0 {
+		out.fallbacks = nil
+	}
+	if len(out.upstreamToProviders) == 0 {
+		out.upstreamToProviders = nil
 	}
 	return out
 }
@@ -68,6 +108,92 @@ func (m *Manager) SetOAuthModelAlias(aliases map[string][]internalconfig.OAuthMo
 		table = &oauthModelAliasTable{}
 	}
 	m.oauthModelAlias.Store(table)
+}
+
+// ResolveGlobalAlias löst einen Modell-Alias kanalübergreifend auf.
+// Wird verwendet, um frei wählbare Aliase (z.B. "default", "smart") vor dem
+// Provider-Routing aufzulösen, wenn das Modell nicht direkt in der Registry steht.
+// Gibt den Upstream-Modellnamen und alle Channels zurück, in denen der Alias definiert ist.
+func (m *Manager) ResolveGlobalAlias(requestedModel string) (upstreamModel string, channels []string) {
+	if m == nil {
+		return "", nil
+	}
+	raw := m.oauthModelAlias.Load()
+	table, _ := raw.(*oauthModelAliasTable)
+	if table == nil || table.reverse == nil {
+		return "", nil
+	}
+	key := strings.ToLower(strings.TrimSpace(requestedModel))
+	if key == "" {
+		return "", nil
+	}
+	for channel, rev := range table.reverse {
+		if original, ok := rev[key]; ok && original != "" {
+			if upstreamModel == "" {
+				upstreamModel = original
+			}
+			channels = append(channels, channel)
+		}
+	}
+	return upstreamModel, channels
+}
+
+// GetProvidersForUpstreamModel gibt die Provider (Channels) zurück, die ein
+// bestimmtes Upstream-Modell in der oauth-model-alias Config konfiguriert haben.
+// Damit können Provider für Modellnamen gefunden werden, die nicht direkt in
+// der globalen Registry registriert sind (z.B. claude-opus-4-5 -> antigravity).
+func (m *Manager) GetProvidersForUpstreamModel(model string) []string {
+	if m == nil {
+		return nil
+	}
+	raw := m.oauthModelAlias.Load()
+	table, _ := raw.(*oauthModelAliasTable)
+	if table == nil || table.upstreamToProviders == nil {
+		return nil
+	}
+	key := strings.ToLower(strings.TrimSpace(model))
+	if key == "" {
+		return nil
+	}
+	if providers, ok := table.upstreamToProviders[key]; ok && len(providers) > 0 {
+		out := make([]string, len(providers))
+		copy(out, providers)
+		return out
+	}
+	return nil
+}
+
+// GetModelFallbacks gibt die konfigurierten Fallback-Aliase für einen
+// gegebenen Modell-Alias zurück. Sucht kanalübergreifend und gibt die
+// erste passende Fallback-Chain zurück. Nil wenn keine Fallbacks konfiguriert sind.
+func (m *Manager) GetModelFallbacks(model string) []string {
+	if m == nil {
+		return nil
+	}
+	raw := m.oauthModelAlias.Load()
+	table, _ := raw.(*oauthModelAliasTable)
+	if table == nil || table.fallbacks == nil {
+		return nil
+	}
+	key := strings.ToLower(strings.TrimSpace(model))
+	if key == "" {
+		return nil
+	}
+	for _, channelFB := range table.fallbacks {
+		if fb, ok := channelFB[key]; ok && len(fb) > 0 {
+			return fb
+		}
+	}
+	return nil
+}
+
+func sliceContains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
 }
 
 // applyOAuthModelAlias resolves the upstream model from OAuth model alias.
