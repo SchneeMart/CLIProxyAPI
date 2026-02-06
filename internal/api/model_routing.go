@@ -194,6 +194,11 @@ func (s *Server) switchModelPostHandler() gin.HandlerFunc {
 			return
 		}
 
+		// Alias-Tabelle im AuthManager sofort aktualisieren (ohne auf File-Watcher zu warten)
+		if s.handlers != nil && s.handlers.AuthManager != nil {
+			s.handlers.AuthManager.SetOAuthModelAlias(cfg.OAuthModelAlias)
+		}
+
 		log.Infof("Modell gewechselt: %s -> %s (alias=%s, channel=%s)", previousModel, model, alias, channel)
 
 		c.JSON(http.StatusOK, gin.H{
