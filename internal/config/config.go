@@ -114,7 +114,47 @@ type Config struct {
 	// Payload defines default and override rules for provider payload parameters.
 	Payload PayloadConfig `yaml:"payload" json:"payload"`
 
+	// Wyoming konfiguriert die Wyoming-Protokoll-Server für Home Assistant Voice.
+	Wyoming WyomingConfig `yaml:"wyoming" json:"wyoming"`
+
 	legacyMigrationPending bool `yaml:"-" json:"-"`
+}
+
+// WyomingConfig enthält die Konfiguration für die Wyoming-Protokoll-Server.
+type WyomingConfig struct {
+	// Enabled aktiviert/deaktiviert die Wyoming-Server
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// STT-Konfiguration
+	STT WyomingSTTConfig `yaml:"stt" json:"stt"`
+
+	// TTS-Konfiguration
+	TTS WyomingTTSConfig `yaml:"tts" json:"tts"`
+
+	// WakeWord-Konfiguration
+	WakeWord WyomingWakeWordConfig `yaml:"wake-word" json:"wake-word"`
+}
+
+// WyomingSTTConfig enthält die STT-spezifische Konfiguration.
+type WyomingSTTConfig struct {
+	Enabled  *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port     int    `yaml:"port" json:"port"`
+	Model    string `yaml:"model" json:"model"`
+	Language string `yaml:"language" json:"language"`
+}
+
+// WyomingTTSConfig enthält die TTS-spezifische Konfiguration.
+type WyomingTTSConfig struct {
+	Enabled *bool  `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port    int    `yaml:"port" json:"port"`
+	Model   string `yaml:"model" json:"model"`
+}
+
+// WyomingWakeWordConfig enthält die Wake-Word-spezifische Konfiguration.
+type WyomingWakeWordConfig struct {
+	Enabled         *bool   `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Port            int     `yaml:"port" json:"port"`
+	EnergyThreshold float64 `yaml:"energy-threshold" json:"energy-threshold"`
 }
 
 // TLSConfig holds HTTPS server settings.
@@ -170,9 +210,10 @@ type RoutingConfig struct {
 // When Fork is true, the alias is added as an additional model in listings while
 // keeping the original model ID available.
 type OAuthModelAlias struct {
-	Name  string `yaml:"name" json:"name"`
-	Alias string `yaml:"alias" json:"alias"`
-	Fork  bool   `yaml:"fork,omitempty" json:"fork,omitempty"`
+	Name     string   `yaml:"name" json:"name"`
+	Alias    string   `yaml:"alias" json:"alias"`
+	Fork     bool     `yaml:"fork,omitempty" json:"fork,omitempty"`
+	Fallback []string `yaml:"fallback,omitempty" json:"fallback,omitempty"`
 }
 
 // AmpModelMapping defines a model name mapping for Amp CLI requests.
@@ -712,7 +753,7 @@ func (cfg *Config) SanitizeOAuthModelAlias() {
 				continue
 			}
 			seenAlias[aliasKey] = struct{}{}
-			clean = append(clean, OAuthModelAlias{Name: name, Alias: alias, Fork: entry.Fork})
+			clean = append(clean, OAuthModelAlias{Name: name, Alias: alias, Fork: entry.Fork, Fallback: entry.Fallback})
 		}
 		if len(clean) > 0 {
 			out[channel] = clean

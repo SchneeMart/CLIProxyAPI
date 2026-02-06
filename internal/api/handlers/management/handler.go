@@ -266,6 +266,15 @@ func (h *Handler) Middleware() gin.HandlerFunc {
 	}
 }
 
+// PersistConfig speichert die aktuelle In-Memory-Config auf Disk.
+// Im Gegensatz zu persist() wird keine HTTP-Response geschrieben.
+// Wird von Endpoints außerhalb des Management-Handlers verwendet (z.B. /v1/switch-model).
+func (h *Handler) PersistConfig() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return config.SaveConfigPreserveComments(h.configFilePath, h.cfg)
+}
+
 // persist saves the current in-memory config to disk.
 func (h *Handler) persist(c *gin.Context) bool {
 	h.mu.Lock()

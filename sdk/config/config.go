@@ -31,6 +31,11 @@ type OpenAICompatibility = internalconfig.OpenAICompatibility
 type OpenAICompatibilityAPIKey = internalconfig.OpenAICompatibilityAPIKey
 type OpenAICompatibilityModel = internalconfig.OpenAICompatibilityModel
 
+type WyomingConfig = internalconfig.WyomingConfig
+type WyomingSTTConfig = internalconfig.WyomingSTTConfig
+type WyomingTTSConfig = internalconfig.WyomingTTSConfig
+type WyomingWakeWordConfig = internalconfig.WyomingWakeWordConfig
+
 type TLS = internalconfig.TLSConfig
 
 const (

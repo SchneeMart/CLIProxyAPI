@@ -48,3 +48,9 @@ _bmad-output/*
 # macOS
 .DS_Store
 ._*
+
+# Go build cache
+.go-cache/
+
+# Credentials
+CREDENTIALS.md

@@ -18,6 +18,7 @@ import (
 	_ "github.com/router-for-me/CLIProxyAPI/v6/internal/usage"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/watcher"
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/wsrelay"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/wyoming"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v6/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v6/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -89,6 +90,9 @@ type Service struct {
 
 	// wsGateway manages websocket Gemini providers.
 	wsGateway *wsrelay.Manager
+
+	// wyomingManager verwaltet die Wyoming-Protokoll-Server für Home Assistant Voice.
+	wyomingManager *wyoming.Manager
 }
 
 // RegisterUsagePlugin registers a usage plugin on the global usage manager.
@@ -521,6 +525,19 @@ func (s *Service) Run(ctx context.Context) error {
 
 	s.applyPprofConfig(s.cfg)
 
+	// Wyoming-Server starten (Home Assistant Voice)
+	if s.cfg.Wyoming.Enabled {
+		s.wyomingManager = wyoming.NewManager()
+		proxyBaseURL := fmt.Sprintf("http://127.0.0.1:%d", s.cfg.Port)
+		apiKey := ""
+		if len(s.cfg.APIKeys) > 0 {
+			apiKey = s.cfg.APIKeys[0]
+		}
+		if err := s.wyomingManager.Start(ctx, &s.cfg.Wyoming, proxyBaseURL, apiKey); err != nil {
+			log.Errorf("Fehler beim Starten der Wyoming-Server: %v", err)
+		}
+	}
+
 	if s.hooks.OnAfterStart != nil {
 		s.hooks.OnAfterStart(s)
 	}
@@ -665,6 +682,11 @@ func (s *Service) Shutdown(ctx context.Context) error {
 			if shutdownErr == nil {
 				shutdownErr = errShutdownPprof
 			}
+		}
+
+		// Wyoming-Server stoppen
+		if s.wyomingManager != nil {
+			s.wyomingManager.Stop()
 		}
 
 		// no legacy clients to persist
@@ -1271,8 +1293,9 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 	}
 
 	type aliasEntry struct {
-		alias string
-		fork  bool
+		alias        string
+		upstreamName string // Upstream-Modellname mit Original-Casing
+		fork         bool
 	}
 
 	forward := make(map[string][]aliasEntry, len(aliases))
@@ -1286,7 +1309,7 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			continue
 		}
 		key := strings.ToLower(name)
-		forward[key] = append(forward[key], aliasEntry{alias: alias, fork: aliases[i].Fork})
+		forward[key] = append(forward[key], aliasEntry{alias: alias, upstreamName: name, fork: aliases[i].Fork})
 	}
 	if len(forward) == 0 {
 		return models
@@ -1294,6 +1317,7 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 
 	out := make([]*ModelInfo, 0, len(models))
 	seen := make(map[string]struct{}, len(models))
+	matched := make(map[string]struct{}) // Tracking welche forward-Keys ein Match im Listing hatten
 	for _, model := range models {
 		if model == nil {
 			continue
@@ -1312,6 +1336,8 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			out = append(out, model)
 			continue
 		}
+
+		matched[key] = struct{}{}
 
 		keepOriginal := false
 		for _, entry := range entries {
@@ -1358,5 +1384,51 @@ func applyOAuthModelAlias(cfg *config.Config, provider, authKind string, models 
 			out = append(out, model)
 		}
 	}
+
+	// Synthetische Einträge für Aliase, deren Upstream-Modell nicht im Provider-Listing war.
+	// Das ermöglicht Routing über frei wählbare Alias-Namen (z.B. "default", "smart"),
+	// auch wenn der Upstream-Modellname (z.B. "claude-opus-4-5") nicht direkt vom
+	// Provider gelistet wird.
+	now := time.Now().Unix()
+	for upstreamKey, entries := range forward {
+		if _, wasMatched := matched[upstreamKey]; wasMatched {
+			continue // Wurde bereits von einem Modell im Listing verarbeitet
+		}
+		for _, entry := range entries {
+			aliasKey := strings.ToLower(strings.TrimSpace(entry.alias))
+			if aliasKey == "" {
+				continue
+			}
+			// Alias-Eintrag registrieren
+			if _, exists := seen[aliasKey]; !exists {
+				seen[aliasKey] = struct{}{}
+				out = append(out, &ModelInfo{
+					ID:          entry.alias,
+					Name:        entry.alias,
+					DisplayName: entry.alias,
+					Object:      "model",
+					Created:     now,
+					OwnedBy:     provider,
+					Type:        provider,
+				})
+			}
+			// Upstream-Modellname ebenfalls registrieren für Cross-Provider-Routing.
+			// Damit kann ClientSupportsModel sowohl mit dem Alias als auch mit dem
+			// aufgelösten Modellnamen TRUE zurückgeben.
+			if _, exists := seen[upstreamKey]; !exists {
+				seen[upstreamKey] = struct{}{}
+				out = append(out, &ModelInfo{
+					ID:          entry.upstreamName,
+					Name:        entry.upstreamName,
+					DisplayName: entry.upstreamName,
+					Object:      "model",
+					Created:     now,
+					OwnedBy:     provider,
+					Type:        provider,
+				})
+			}
+		}
+	}
+
 	return out
 }
