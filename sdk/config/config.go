@@ -7,8 +7,6 @@ package config
 import internalconfig "github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 
 type SDKConfig = internalconfig.SDKConfig
-type AccessConfig = internalconfig.AccessConfig
-type AccessProvider = internalconfig.AccessProvider
 
 type Config = internalconfig.Config
 
@@ -39,14 +37,8 @@ type WyomingWakeWordConfig = internalconfig.WyomingWakeWordConfig
 type TLS = internalconfig.TLSConfig
 
 const (
-	AccessProviderTypeConfigAPIKey = internalconfig.AccessProviderTypeConfigAPIKey
-	DefaultAccessProviderName      = internalconfig.DefaultAccessProviderName
-	DefaultPanelGitHubRepository   = internalconfig.DefaultPanelGitHubRepository
+	DefaultPanelGitHubRepository = internalconfig.DefaultPanelGitHubRepository
 )
-
-func MakeInlineAPIKeyProvider(keys []string) *AccessProvider {
-	return internalconfig.MakeInlineAPIKeyProvider(keys)
-}
 
 func LoadConfig(configFile string) (*Config, error) { return internalconfig.LoadConfig(configFile) }
 
