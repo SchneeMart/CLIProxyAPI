@@ -648,51 +648,84 @@ func (h *BaseAPIHandler) getRequestDetails(modelName string) (providers []string
 		providers = util.GetProviderName(resolvedModelName)
 	}
 
-	// Virtuelle Alias-Auflösung: NUR wenn kein Provider gefunden wurde, prüfe ob
-	// das Modell ein konfigurierter Alias ist (z.B. "default", "smart", "fast").
-	// Der aufgelöste Upstream-Name (z.B. "claude-opus-4-5") wird für das
-	// Provider-Routing verwendet. Die Alias-Channels werden als zusätzliche
-	// Provider hinzugefügt, damit alle Provider mit dem gleichen Modell
-	// unter verschiedenen Namen erreichbar sind.
-	if len(providers) == 0 && h.AuthManager != nil {
-		upstreamModel, aliasChannels := h.AuthManager.ResolveGlobalAlias(baseModel)
-		if upstreamModel != "" {
-			// Provider für das aufgelöste Upstream-Modell aus der Registry holen
-			providers = util.GetProviderName(upstreamModel)
-			// Provider aus der Alias-Config hinzufügen (die kennen das Modell
-			// unter einem anderen Namen und lösen es per applyOAuthModelAlias auf)
+	// Virtuelle Alias-Auflösung: Prüft ob das Modell ein konfigurierter Alias ist
+	// (z.B. "default", "smart", "fast"). Löst den Upstream-Namen auf und findet den
+	// nativen Provider der dieses Modell direkt bedienen kann.
+	//
+	// Wird ausgeführt wenn:
+	// a) kein Provider gefunden wurde, ODER
+	// b) alle gefundenen Provider nur Alias-Channels sind (können das Modell nicht
+	//    nativ bedienen, z.B. MiniMax-M2.5 über antigravity)
+	//
+	// So wird z.B. "default" → "MiniMax-M2.5" über den claude-api-key geroutet,
+	// auch wenn antigravity "default" synthetisch registriert hat.
+	needsAliasResolution := len(providers) == 0
+	if !needsAliasResolution && h.AuthManager != nil {
+		_, aliasChannels := h.AuthManager.ResolveGlobalAlias(baseModel)
+		if len(aliasChannels) > 0 {
+			aliasSet := make(map[string]struct{}, len(aliasChannels))
 			for _, ch := range aliasChannels {
-				ch = strings.ToLower(strings.TrimSpace(ch))
-				if ch == "" {
-					continue
-				}
-				found := false
-				for _, p := range providers {
-					if p == ch {
-						found = true
-						break
-					}
-				}
-				if !found {
-					providers = append(providers, ch)
+				if ch = strings.ToLower(strings.TrimSpace(ch)); ch != "" {
+					aliasSet[ch] = struct{}{}
 				}
 			}
-			// Auch Provider hinzufügen, die das Upstream-Modell in der
-			// Alias-Config als name-Feld haben (Cross-Provider-Äquivalenz)
-			for _, ch := range h.AuthManager.GetProvidersForUpstreamModel(upstreamModel) {
-				ch = strings.ToLower(strings.TrimSpace(ch))
-				if ch == "" {
-					continue
+			allAlias := true
+			for _, p := range providers {
+				if _, isAlias := aliasSet[strings.ToLower(p)]; !isAlias {
+					allAlias = false
+					break
 				}
-				found := false
-				for _, p := range providers {
-					if p == ch {
-						found = true
-						break
+			}
+			needsAliasResolution = allAlias
+		}
+	}
+	if needsAliasResolution && h.AuthManager != nil {
+		upstreamModel, aliasChannels := h.AuthManager.ResolveGlobalAlias(baseModel)
+		if upstreamModel != "" {
+			// Natives Provider für das aufgelöste Upstream-Modell aus der Registry holen.
+			// Wenn ein nativer Provider (z.B. claude-api-key für MiniMax-M2.5) existiert,
+			// wird direkt dorthin geroutet. Alias-Channels (antigravity) werden nur als
+			// Fallback hinzugefügt wenn kein nativer Provider vorhanden ist.
+			nativeProviders := util.GetProviderName(upstreamModel)
+			if len(nativeProviders) > 0 {
+				// Nativer Provider gefunden: nur diesen verwenden, kein antigravity-Fallback
+				providers = nativeProviders
+			} else {
+				// Kein nativer Provider: Alias-Channels als Provider verwenden
+				// (die lösen das Modell per applyOAuthModelAlias auf)
+				for _, ch := range aliasChannels {
+					ch = strings.ToLower(strings.TrimSpace(ch))
+					if ch == "" {
+						continue
+					}
+					found := false
+					for _, p := range providers {
+						if p == ch {
+							found = true
+							break
+						}
+					}
+					if !found {
+						providers = append(providers, ch)
 					}
 				}
-				if !found {
-					providers = append(providers, ch)
+				// Auch Provider hinzufügen, die das Upstream-Modell in der
+				// Alias-Config als name-Feld haben (Cross-Provider-Äquivalenz)
+				for _, ch := range h.AuthManager.GetProvidersForUpstreamModel(upstreamModel) {
+					ch = strings.ToLower(strings.TrimSpace(ch))
+					if ch == "" {
+						continue
+					}
+					found := false
+					for _, p := range providers {
+						if p == ch {
+							found = true
+							break
+						}
+					}
+					if !found {
+						providers = append(providers, ch)
+					}
 				}
 			}
 			// Aufgelöstes Modell als normalizedModel verwenden (mit Thinking-Suffix)
