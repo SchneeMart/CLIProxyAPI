@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -19,7 +20,19 @@ const (
 	anthropicUsageURL   = "https://api.anthropic.com/api/oauth/usage"
 	anthropicBetaHeader = "oauth-2025-04-20"
 	oauthUsageTimeout   = 10 * time.Second
+	oauthUsageCacheTTL  = 2 * time.Minute // Cache erfolgreiche Abfragen 2 Minuten
 )
+
+// In-Memory Cache für OAuth-Usage pro E-Mail
+var (
+	oauthUsageCacheMu   sync.RWMutex
+	oauthUsageCacheData = make(map[string]*oauthUsageCacheEntry)
+)
+
+type oauthUsageCacheEntry struct {
+	usage     *oauthUsageResponse
+	fetchedAt time.Time
+}
 
 type oauthUsageResponse struct {
 	FiveHour       *usageBucket `json:"five_hour"`
@@ -117,15 +130,47 @@ func (s *Server) oauthUsageHandler() gin.HandlerFunc {
 				continue
 			}
 
-			usage, errFetch := fetchAnthropicOAuthUsage(accessToken)
-			if errFetch != nil {
-				log.Warnf("oauth-usage: failed to fetch usage for %s: %v", email, errFetch)
+			// Cache prüfen (2 Minuten TTL)
+			oauthUsageCacheMu.RLock()
+			cached, hasCached := oauthUsageCacheData[email]
+			oauthUsageCacheMu.RUnlock()
+
+			if hasCached && time.Since(cached.fetchedAt) < oauthUsageCacheTTL {
+				// Frischer Cache-Hit
 				results = append(results, accountUsage{
 					Email: email,
-					Error: errFetch.Error(),
+					Usage: cached.usage,
 				})
 				continue
 			}
+
+			// Frisch von Anthropic holen
+			usage, errFetch := fetchAnthropicOAuthUsage(accessToken)
+			if errFetch != nil {
+				log.Warnf("oauth-usage: failed to fetch usage for %s: %v", email, errFetch)
+				// Bei Fehler (429 etc.): letzten gecachten Wert zurückgeben
+				if hasCached && cached.usage != nil {
+					log.Infof("oauth-usage: using cached data for %s (age: %v)", email, time.Since(cached.fetchedAt).Round(time.Second))
+					results = append(results, accountUsage{
+						Email: email,
+						Usage: cached.usage,
+					})
+				} else {
+					results = append(results, accountUsage{
+						Email: email,
+						Error: errFetch.Error(),
+					})
+				}
+				continue
+			}
+
+			// Erfolg: in Cache speichern
+			oauthUsageCacheMu.Lock()
+			oauthUsageCacheData[email] = &oauthUsageCacheEntry{
+				usage:     usage,
+				fetchedAt: time.Now(),
+			}
+			oauthUsageCacheMu.Unlock()
 
 			results = append(results, accountUsage{
 				Email: email,

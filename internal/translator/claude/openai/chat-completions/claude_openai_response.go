@@ -27,6 +27,8 @@ type ConvertAnthropicResponseToOpenAIParams struct {
 	FinishReason string
 	// Tool calls accumulator for streaming
 	ToolCallsAccumulator map[int]*ToolCallAccumulator
+	// MiniMax Tool Call Post-Processor State
+	MiniMaxState *MiniMaxToolCallState
 }
 
 // ToolCallAccumulator holds the state for accumulating tool call data
@@ -139,7 +141,44 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 			case "text_delta":
 				// Text content delta - send incremental text updates
 				if text := delta.Get("text"); text.Exists() {
-					template, _ = sjson.Set(template, "choices.0.delta.content", text.String())
+					textStr := text.String()
+
+					// MiniMax Tool Call Erkennung: XML/FunctionCall Blöcke in das JSON-Format
+					// konvertieren das Open WebUI erwartet: {"tool_calls": [...]}
+					p := (*param).(*ConvertAnthropicResponseToOpenAIParams)
+					if p.MiniMaxState == nil {
+						p.MiniMaxState = &MiniMaxToolCallState{}
+					}
+					normalText, toolCalls, pending := p.MiniMaxState.ProcessText(textStr)
+
+					if len(toolCalls) > 0 {
+						// MiniMax Tool Calls erkannt - als JSON-Text im Content ausgeben
+						// Open WebUI parst dieses Format aus dem Text-Content
+						var results []string
+						if normalText != "" {
+							t := template
+							t, _ = sjson.Set(t, "choices.0.delta.content", normalText)
+							results = append(results, t)
+						}
+						// Tool Calls als JSON-Text im erwarteten Format ausgeben
+						jsonToolCalls := MiniMaxToolCallsToJSON(toolCalls)
+						t := template
+						t, _ = sjson.Set(t, "choices.0.delta.content", jsonToolCalls)
+						results = append(results, t)
+						return results
+					}
+
+					if pending {
+						// Puffern - nur normalen Text vor dem XML-Block ausgeben
+						if normalText != "" {
+							template, _ = sjson.Set(template, "choices.0.delta.content", normalText)
+							return []string{template}
+						}
+						return []string{}
+					}
+
+					// Kein MiniMax XML - normaler Text
+					template, _ = sjson.Set(template, "choices.0.delta.content", textStr)
 					hasContent = true
 				}
 			case "thinking_delta":
@@ -196,8 +235,14 @@ func ConvertClaudeResponseToOpenAI(_ context.Context, modelName string, original
 		// Handle message-level changes including stop reason and usage
 		if delta := root.Get("delta"); delta.Exists() {
 			if stopReason := delta.Get("stop_reason"); stopReason.Exists() {
-				(*param).(*ConvertAnthropicResponseToOpenAIParams).FinishReason = mapAnthropicStopReasonToOpenAI(stopReason.String())
-				template, _ = sjson.Set(template, "choices.0.finish_reason", (*param).(*ConvertAnthropicResponseToOpenAIParams).FinishReason)
+				p := (*param).(*ConvertAnthropicResponseToOpenAIParams)
+				// Wenn MiniMax Tool Calls erkannt wurden, finish_reason auf tool_calls setzen
+				if p.MiniMaxState != nil && p.MiniMaxState.HasToolCalls {
+					p.FinishReason = "tool_calls"
+				} else {
+					p.FinishReason = mapAnthropicStopReasonToOpenAI(stopReason.String())
+				}
+				template, _ = sjson.Set(template, "choices.0.finish_reason", p.FinishReason)
 			}
 		}
 
@@ -381,6 +426,24 @@ func ConvertClaudeResponseToOpenAINonStream(_ context.Context, _ string, origina
 
 	// Set message content by combining all text parts
 	messageContent := strings.Join(contentParts, "")
+
+	// MiniMax Post-Processor: XML tool_call Blöcke im Text erkennen und konvertieren
+	cleanText, mmToolCalls := ParseMiniMaxToolCallsFromText(messageContent)
+	if len(mmToolCalls) > 0 {
+		messageContent = cleanText
+		// MiniMax Tool Calls zum Accumulator hinzufügen
+		mmIdx := 1000 // Hoher Index um Konflikte mit echten tool_use Blocks zu vermeiden
+		for _, tc := range mmToolCalls {
+			acc := &ToolCallAccumulator{
+				ID:   fmt.Sprintf("toolu_mm_%06d", mmIdx),
+				Name: tc.Name,
+			}
+			acc.Arguments.WriteString(ToolCallsToJSON(tc.Parameters))
+			toolCallsAccumulator[mmIdx] = acc
+			mmIdx++
+		}
+	}
+
 	out, _ = sjson.Set(out, "choices.0.message.content", messageContent)
 
 	// Add reasoning content if available (following OpenAI reasoning format)
