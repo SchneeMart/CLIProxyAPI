@@ -12,6 +12,8 @@ logs/*
 conv/*
 temp/*
 refs/*
+plugins/*
+examples/plugin/bin/*
 
 # Storage backends
 pgstore/*
@@ -53,6 +55,7 @@ _bmad-output/*
 
 # Go build cache
 .go-cache/
+.gocache/
 
 # Credentials
 CREDENTIALS.md
