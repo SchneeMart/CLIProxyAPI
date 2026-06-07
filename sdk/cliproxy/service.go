@@ -24,6 +24,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/diff"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/watcher/synthesizer"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/wsrelay"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/wyoming"
 	sdkaccess "github.com/router-for-me/CLIProxyAPI/v7/sdk/access"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"

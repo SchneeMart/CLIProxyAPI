@@ -24,6 +24,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/audio"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules"
@@ -418,7 +419,7 @@ func (s *Server) setupRoutes() {
 	geminiCLIHandlers := gemini.NewGeminiCLIAPIHandler(s.handlers)
 	claudeCodeHandlers := claude.NewClaudeCodeAPIHandler(s.handlers)
 	openaiResponsesHandlers := openai.NewOpenAIResponsesAPIHandler(s.handlers)
-	audioHandler := audioHandlers.NewAudioHandler(s.cfg)
+	audioHandler := audio.NewAudioHandler(s.cfg)
 
 	// OpenAI compatible API routes
 	v1 := s.engine.Group("/v1")
